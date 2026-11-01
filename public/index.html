@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>黑黑看单词</title>
+  <link rel="icon" type="image/png" href="/assets/momo-owl.png">
+  <link rel="apple-touch-icon" href="/assets/momo-owl.png">
+  <meta name="theme-color" content="#F5FBF5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F1511" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/theme.js"></script>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="app" :class="['fs-' + (opts.fontSize || 'm'), { 'bar-hidden': barHidden, 'opt-bold-forget': opts.boldForget, 'opt-mark-targets': opts.markTargets }]">
+    <!-- 导航：桌面 Navigation rail，移动端底部 Navigation bar -->
+    <!-- 移动端顶部品牌栏（桌面端品牌在导航栏顶部） -->
+    <header class="app-bar">
+      <a class="brand" href="#/today" :aria-label="brandName + ' 首页'">
+        <span class="brand-logo owl-logo" aria-hidden="true"></span>
+        <span class="brand-name">{{ brandName }}</span>
+      </a>
+    </header>
+
+    <nav class="nav" aria-label="主导航">
+      <a class="nav-brand" href="#/today" :title="brandName" :aria-label="brandName + ' 首页'">
+        <span class="owl-logo" aria-hidden="true"></span>
+      </a>
+      <a v-for="n in navItems" :key="n.view" class="nav-item" :href="n.href"
+         :class="{ active: activeNav === n.view }" :aria-current="activeNav === n.view ? 'page' : null">
+        <span class="nav-indicator"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="n.icon"/></svg></span>
+        <span class="nav-label">{{ n.label }}</span>
+      </a>
+    </nav>
+
+    <main class="main" tabindex="-1">
+      <!-- ============================== 今天 / 某一天 -->
+      <section class="view" v-if="view === 'day'" :key="'day-' + (readIdx === null ? 'list' : 'read')">
+        <template v-if="readIdx === null">
+        <header class="top-bar">
+          <div>
+            <h1 class="headline">{{ isToday ? '今天' : fmtDate(date) }}</h1>
+            <p class="supporting">{{ isToday ? fmtDate(date) : '历史记录' }}</p>
+          </div>
+          <div class="top-actions">
+            <button v-if="isToday" class="btn tonal" type="button" :disabled="busy" @click="fetchMomo">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.refresh"/></svg>拉取墨墨
+            </button>
+            <button class="btn filled" type="button" :disabled="busy" title="Ctrl/⌘ + Enter" @click="generateAll">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.spark"/></svg>生成短文
+            </button>
+            <div class="menu-anchor">
+              <button class="icon-btn more-btn" type="button" aria-label="更多操作" :aria-expanded="menuOpen === 'day'" @click.stop="toggleMenu('day')">
+                <svg viewBox="0 0 24 24"><path :d="icons.more"/></svg></button>
+              <transition name="menu">
+              <div v-if="menuOpen === 'day'" class="menu" role="menu" @click.stop>
+                <button class="menu-item" type="button" role="menuitem" @click="openWordDlg"><svg viewBox="0 0 24 24"><path :d="icons.add"/></svg>手动补词</button>
+                <div class="menu-divider"></div>
+                <div class="menu-caption">回写墨墨（选中的词）</div>
+                <button class="menu-item" type="button" role="menuitem" :disabled="busy" @click="menuDo(() => addToStudy(false))"><svg viewBox="0 0 24 24"><path :d="icons.playlist"/></svg>加入学习计划</button>
+                <button class="menu-item" type="button" role="menuitem" :disabled="busy" @click="menuDo(() => addToStudy(true))"><svg viewBox="0 0 24 24"><path :d="icons.fast"/></svg>加入并提前复习</button>
+                <button class="menu-item" type="button" role="menuitem" :disabled="busy" @click="menuDo(saveNotepad)"><svg viewBox="0 0 24 24"><path :d="icons.note"/></svg>保存为云词本</button>
+                <div class="menu-divider"></div>
+                <div class="menu-caption">导出这一天</div>
+                <button class="menu-item" type="button" role="menuitem" @click="menuDo(exportWord)"><svg viewBox="0 0 24 24"><path :d="icons.download"/></svg>导出 Word</button>
+                <button class="menu-item" type="button" role="menuitem" @click="menuDo(exportPdf)"><svg viewBox="0 0 24 24"><path :d="icons.download"/></svg>导出 PDF</button>
+                <button class="menu-item" type="button" role="menuitem" @click="menuDo(exportMarkdown)"><svg viewBox="0 0 24 24"><path :d="icons.download"/></svg>导出 Markdown</button>
+              </div>
+              </transition>
+            </div>
+          </div>
+        </header>
+
+        <div v-if="progress.on" class="progress" :class="{ determinate: progress.frac !== null }">
+          <div class="progress-bar" :style="progress.frac !== null ? { width: Math.max(4, progress.frac * 100) + '%' } : null"></div>
+        </div>
+        <div v-if="banner.text" class="banner" :class="banner.kind" role="status">{{ banner.text }}</div>
+
+        <div class="stats">
+          <div class="stat primary"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.timer"/></svg><div class="stat-value"><template v-if="day.progress"><template v-for="(p, i) in durParts(day.progress.study_time_ms)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></template><template v-else>—</template></div><div class="stat-label">背单词时长</div></div>
+          <div class="stat done"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.done"/></svg><div class="stat-value">{{ day.progress ? `${day.progress.finished}/${day.progress.total}` : '—' }}</div><div class="stat-label">今日完成</div></div>
+          <div class="stat forget"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.forget"/></svg><div class="stat-value">{{ countOf('FORGET') }}</div><div class="stat-label">忘记</div></div>
+          <div class="stat vague"><svg class="stat-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.vague"/></svg><div class="stat-value">{{ countOf('VAGUE') }}</div><div class="stat-label">模糊</div></div>
+        </div>
+
+        <div class="card outlined controls">
+          <div class="controls-row">
+            <span class="label-large">复习范围</span>
+            <div class="chip-set" role="group" aria-label="复习范围">
+              <button v-for="r in ['FORGET', 'VAGUE']" :key="r" type="button" class="chip filter"
+                      :class="{ selected: responses.includes(r) }" :aria-pressed="responses.includes(r)" @click="toggleResponse(r)">
+                {{ RESP_ZH[r] }}
+              </button>
+            </div>
+          </div>
+          <details class="words-details">
+            <summary class="label-large">今日词表（选中 {{ pickedWords.length }} / 共 {{ day.words.length }}）</summary>
+            <div class="chip-set words">
+              <span v-for="w in day.words" :key="w.spelling" class="chip word"
+                    :class="[w.response, { off: !responses.includes(w.response) }]" :title="RESP_ZH[w.response] || ''">
+                {{ w.spelling }}<small v-if="w.source === 'manual'" class="tag">手动</small>
+                <button v-if="w.source === 'manual'" class="chip-x" type="button" aria-label="移除" @click="removeWord(w)">×</button>
+              </span>
+              <span v-if="!day.words.length" class="body-small muted">还没有词。先拉取墨墨，或在下面「更多」里手动补词。</span>
+            </div>
+          </details>
+        </div>
+
+        <div class="articles">
+          <div v-if="!slots.length" class="empty">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.book"/></svg>
+            <div class="title-medium">{{ day.words.length ? '词表已就绪，点「生成短文」' : '还没有这一天的短文' }}</div>
+            <ol v-if="!day.words.length">
+              <li>在墨墨 App 里背完今天的单词（开启自动同步）</li>
+              <li>在「设置」里填好 Token 和本地模型地址</li>
+              <li>点「拉取墨墨」，再点「生成短文」</li>
+            </ol>
+          </div>
+          <template v-else>
+          <h3 class="pref-label">{{ isToday ? '今天的短文' : '这一天的短文' }} · {{ slots.length }} 篇</h3>
+          <div class="settings-list article-list">
+            <template v-for="(s, i) in slots" :key="s.idx">
+              <a v-if="s.article" class="settings-item article-item" :href="readHref(s.idx)" :style="{ '--i': i }">
+                <span class="settings-icon" :class="'style-' + s.article.style"><svg viewBox="0 0 24 24"><path :d="s.article.style === 'story' ? icons.story : icons.book"/></svg></span>
+                <span class="settings-text">
+                  <span class="settings-name article-title" lang="en">{{ s.article.content.title || 'Untitled' }}</span>
+                  <span class="settings-desc">{{ s.article.content.title_zh ? s.article.content.title_zh + ' · ' : '' }}{{ styleName(s.article.style, s.article.content.target) }} · {{ s.article.words.length }} 词</span>
+                </span>
+                <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.chevron"/></svg>
+              </a>
+              <div v-else class="settings-item static article-item pending" :aria-busy="!s.error" :style="{ '--i': i }">
+                <span class="settings-icon" :class="s.error ? 'err' : 'busy'"><svg viewBox="0 0 24 24"><path :d="s.error ? icons.forget : icons.spark"/></svg></span>
+                <span class="settings-text">
+                  <span class="settings-name">第 {{ s.idx + 1 }} 篇 · {{ styleName(s.style) }}</span>
+                  <span class="settings-desc">{{ s.error || `${s.words.length} 个词 · ${s.status || '排队中'}` }}</span>
+                </span>
+                <button v-if="s.error" class="btn tonal small" type="button" :disabled="busy" @click="generateOne(s)">重试</button>
+                <span v-else class="mini-spinner" aria-hidden="true"></span>
+              </div>
+            </template>
+          </div>
+          </template>
+        </div>
+        </template>
+
+        <!-- 阅读一篇：二级页 -->
+        <template v-else>
+        <header class="top-bar sub-bar reader-bar">
+          <div class="sub-bar-row">
+            <a class="icon-btn back-btn" :href="dayHref" aria-label="返回"><svg viewBox="0 0 24 24"><path :d="icons.back"/></svg></a>
+            <span class="spacer"></span>
+            <div class="menu-anchor">
+              <button class="icon-btn" type="button" aria-label="显示选项" title="显示选项" :aria-expanded="menuOpen === 'read'" @click.stop="toggleMenu('read')">
+                <svg viewBox="0 0 24 24"><path :d="icons.textFormat"/></svg></button>
+              <transition name="menu">
+              <div v-if="menuOpen === 'read'" class="menu menu-wide" role="dialog" aria-label="显示选项" @click.stop>
+                <div class="menu-caption">字号</div>
+                <div class="menu-pad">
+                  <div class="segmented full small" role="radiogroup" aria-label="字号">
+                    <button v-for="f in FONT_SIZES" :key="f.id" type="button" :class="{ active: (opts.fontSize || 'm') === f.id }"
+                            role="radio" :aria-checked="(opts.fontSize || 'm') === f.id" @click="opts.fontSize = f.id">{{ f.name }}</button>
+                  </div>
+                </div>
+                <div class="menu-divider"></div>
+                <label class="menu-item switch-item"><span>加粗忘记的词</span><input v-model="opts.boldForget" type="checkbox" class="switch"></label>
+                <label class="menu-item switch-item"><span>下划线标出目标词</span><input v-model="opts.markTargets" type="checkbox" class="switch"></label>
+                <label class="menu-item switch-item"><span>文末显示全文意思</span><input v-model="opts.showZh" type="checkbox" class="switch"></label>
+              </div>
+              </transition>
+            </div>
+          </div>
+          <div><h1 class="headline reader-title" lang="en">{{ readSlots[0] && readSlots[0].article ? (readSlots[0].article.content.title || 'Untitled') : `第 ${readIdx + 1} 篇` }}</h1>
+            <p class="supporting">{{ readSlots[0] && readSlots[0].article && readSlots[0].article.content.title_zh ? readSlots[0].article.content.title_zh + ' · ' : '' }}第 {{ readIdx + 1 }} / {{ slots.length }} 篇 · {{ fmtDate(date) }}</p></div>
+        </header>
+        <div v-if="!readSlots.length" class="empty"><div class="title-medium">这篇不存在或还没生成</div>
+          <a class="btn tonal" :href="dayHref">返回列表</a></div>
+        <div class="articles">
+          <template v-for="s in readSlots" :key="s.idx">
+            <!-- 生成中 / 失败 -->
+            <div v-if="!s.article" class="skeleton" :aria-busy="!s.error">
+              <div class="article-meta">
+                <span class="chip assist" :class="s.style">{{ styleName(s.style) }}</span>
+                <span class="body-small muted">{{ s.error || `第 ${s.idx + 1}/${slots.length} 篇 · ${s.words.length} 个词 · ${s.status || '排队中'}` }}</span>
+              </div>
+              <button v-if="s.error" class="btn tonal small" type="button" :disabled="busy" @click="generateOne(s)">重试这篇</button>
+              <template v-else><div v-for="i in 5" :key="i" class="bar" :style="{ width: (70 + (i * 37) % 30) + '%' }"></div></template>
+            </div>
+
+            <!-- 短文 -->
+            <article v-else class="article" ::="s.article.content.title || '短文'">
+              <div class="article-meta">
+                <span class="chip assist" :class="s.article.style">{{ styleName(s.article.style, s.article.content.target) }}</span>
+                <span class="body-small muted">{{ s.article.words.length }} 个目标词</span>
+                <span class="spacer"></span>
+                <button v-if="!busy" class="btn text small" type="button" @click="regenerate(s.article)">重写</button>
+              </div>
+
+              <nav class="tabs" role="tablist">
+                <button v-for="t in TABS" :key="t.id" type="button" role="tab" class="tab"
+                        :class="{ active: tabOf(s.article) === t.id }" :aria-selected="tabOf(s.article) === t.id"
+                        @click="setTab(s.article, t.id)">{{ t.name }}</button>
+              </nav>
+
+              <template v-if="tabOf(s.article) === 'read'">
+
+                <div class="en" lang="en">
+                  <p v-for="(para, pi) in rendered(s.article)" :key="pi"><template v-for="(tk, ti) in para" :key="ti"><span
+                      v-if="tk.k === 't'" class="t" :data-r="tk.r" tabindex="0" role="button"
+                      :class="{ active: pop.key === keyOf(s.article, pi, ti) }"
+                      @click="showTarget($event, s.article, tk, keyOf(s.article, pi, ti))"
+                      @keydown.enter.prevent="showTarget($event, s.article, tk, keyOf(s.article, pi, ti))">{{ tk.x }}</span><span
+                      v-else-if="tk.k === 'w'" class="w" :class="{ active: pop.key === keyOf(s.article, pi, ti) }"
+                      @click="lookupWord($event, s.article, pi, tk, keyOf(s.article, pi, ti))">{{ tk.x }}</span><template
+                      v-else>{{ tk.x }}</template></template></p>
+                </div>
+                <div v-if="s.article.missing && s.article.missing.length" class="chip-set">
+                  <span class="chip assist warn">模型漏用：{{ s.article.missing.join(', ') }}</span>
+                </div>
+                <div v-if="opts.showZh" class="zh" lang="zh-CN">
+                  <h3>全文意思</h3>
+                  <p v-for="(para, pi) in s.article.content.paragraphs" :key="pi">{{ para.zh || '（这一段没有译文）' }}</p>
+                </div>
+              </template>
+
+              <template v-else-if="tabOf(s.article) === 'glossary'">
+                <div class="learning-list">
+                  <div v-for="g in s.article.content.glossary" :key="g.word" class="learning-item">
+                    <div><strong lang="en">{{ g.word }}</strong> <span class="muted">{{ g.pos }}</span>
+                      <span v-if="g.form && g.form.toLowerCase() !== g.word.toLowerCase()" class="muted"> · 文中：{{ g.form }}</span>
+                      <span v-if="respOf(s.article, g.word)" class="badge" :class="respOf(s.article, g.word)">{{ RESP_ZH[respOf(s.article, g.word)] }}</span></div>
+                    <div>{{ g.meaning_zh }}</div>
+                    <div v-if="g.note" class="body-small muted">{{ g.note }}</div>
+                  </div>
+                </div>
+              </template>
+
+              <template v-else>
+                <div v-if="!s.article.drills" class="drill-empty">
+                  <p class="muted">按「{{ store.target }}」的出题习惯，为这篇的目标词出完形、选择题和复习卡。</p>
+                  <button class="btn tonal" type="button" :disabled="drillBusy[s.article.id] || busy" @click="makeDrills(s.article)">
+                    {{ drillBusy[s.article.id] ? '出题中…' : '生成练习' }}
+                  </button>
+                </div>
+                <template v-else-if="tabOf(s.article) === 'cloze'">
+                  <div class="learning-list">
+                    <div v-for="(c, ci) in s.article.drills.cloze" :key="ci" class="learning-item" lang="en">
+                      <div>{{ ci + 1 }}. {{ c.sentence }}</div>
+                      <div class="body-small muted" lang="zh-CN">提示：{{ c.hint }}</div>
+                      <button class="reveal" type="button" @click="toggleReveal(s.article.id + '-c' + ci)">
+                        {{ revealed[s.article.id + '-c' + ci] ? c.answer : '显示答案' }}</button>
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="tabOf(s.article) === 'quiz'">
+                  <div class="learning-list">
+                    <div v-for="(q, qi) in s.article.drills.questions" :key="qi" class="learning-item">
+                      <div lang="en"><strong>{{ qi + 1 }}. {{ q.question }}</strong></div>
+                      <div class="options" role="radiogroup">
+                        <button v-for="(o, oi) in q.options" :key="oi" type="button" class="option" lang="en"
+                                :class="optionClass(s.article.id, qi, q, o)" @click="answer(s.article.id, qi, o)">{{ o }}</button>
+                      </div>
+                      <div v-if="answers[s.article.id + '-' + qi]" class="body-small">答案 {{ q.answer }}：{{ q.explanation }}</div>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="flashcards">
+                    <button v-for="(f, fi) in s.article.drills.flashcards" :key="fi" type="button" class="flashcard"
+                            :class="{ flipped: revealed[s.article.id + '-f' + fi] }" @click="toggleReveal(s.article.id + '-f' + fi)">
+                      <span v-if="!revealed[s.article.id + '-f' + fi]" lang="en">{{ f.front }}</span>
+                      <span v-else>{{ f.back }}</span>
+                    </button>
+                  </div>
+                  <p v-if="s.article.drills.review_plan" class="body-small muted">复习建议：{{ s.article.drills.review_plan }}</p>
+                </template>
+                <div v-if="s.article.drills" class="drill-foot">
+                  <button class="btn text small" type="button" :disabled="drillBusy[s.article.id] || busy" @click="makeDrills(s.article)">
+                    {{ drillBusy[s.article.id] ? '出题中…' : '重新出题' }}</button>
+                </div>
+              </template>
+            </article>
+          </template>
+        </div>
+        <nav v-if="readSlots.length" class="reader-nav" aria-label="切换短文">
+          <a class="btn outlined-btn" :class="{ disabled: readIdx <= 0 }" :href="readIdx > 0 ? readHref(readIdx - 1) : null">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.back"/></svg>上一篇</a>
+          <a class="btn outlined-btn" :href="dayHref">全部短文</a>
+          <a class="btn filled" :class="{ disabled: readIdx >= slots.length - 1 }" :href="readIdx < slots.length - 1 ? readHref(readIdx + 1) : null">
+            下一篇<svg class="flip" viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.back"/></svg></a>
+        </nav>
+        </template>
+      </section>
+
+      <!-- ============================== 历史 -->
+      <section class="view" v-else-if="view === 'history'">
+        <header class="top-bar"><div><h1 class="headline">历史</h1>
+          <p class="supporting">本周已背单词 <b class="week-study">{{ fmtDuration(weekStudy.ms) }}</b><template v-if="weekStudy.n"> · 学了 {{ weekStudy.n }} 天</template></p></div></header>
+        <div class="card filled-card chart-card">
+          <div class="chart-head">
+            <div class="title-medium">学习时长</div>
+            <div class="segmented small" role="radiogroup" aria-label="曲线范围">
+              <button v-for="m in [{ id: 'day', name: '日' }, { id: 'week', name: '周' }, { id: 'month', name: '月' }]" :key="m.id" type="button"
+                      :class="{ active: chartMode === m.id }" role="radio" :aria-checked="chartMode === m.id" @click="chartMode = m.id">{{ m.name }}</button>
+            </div>
+          </div>
+          <div class="chart-stats">
+            <div><span class="stat-big"><template v-for="(p, i) in durParts(chartStats.total)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></span><span class="body-small muted">{{ chartStats.range }}合计</span></div>
+            <div><span class="stat-big"><template v-for="(p, i) in durParts(chartStats.avg)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></span><span class="body-small muted">学习日平均</span></div>
+            <div><span class="stat-big">{{ chartStats.activeDays }}<small>天</small></span><span class="body-small muted">学习天数</span></div>
+          </div>
+          <div class="bars" :key="chartMode" role="list" ::="'学习时长 · ' + chartStats.range">
+            <div v-for="(b, i) in chartStats.bars" :key="b.key" class="bar-col" :class="{ now: b.now, zero: !b.ms }" role="listitem"
+                 :style="{ '--i': i }" :title="`${b.tip}：${fmtDuration(b.ms)}`" ::="`${b.tip}：${fmtDuration(b.ms)}`">
+              <div class="bar-track" :style="{ '--h': b.pct + '%' }">
+                <span class="bar-val">{{ fmtShort(b.ms) }}</span>
+                <div class="bar-fill" :style="{ height: b.pct + '%' }"></div>
+              </div>
+              <span class="bar-lbl">{{ b.label }}</span>
+            </div>
+          </div>
+          <div class="body-small muted">时长来自墨墨，词表和短文都保存在本机。开着「电脑同步」时，电脑每 15 分钟自动记录一次时长，当天没打开网页也不会断。</div>
+        </div>
+        <ul class="list">
+          <li v-if="!days.length" class="empty">还没有记录。拉取过一次墨墨数据后就会出现在这里。</li>
+          <li v-for="d in days.slice(0, historyLimit)" :key="d.date">
+            <a class="list-item" :href="`#/day/${d.date}`">
+              <span class="list-lead">{{ d.date.slice(5).replace('-', '/') }}</span>
+              <span class="list-body">
+                <span class="list-title">{{ fmtDate(d.date) }}{{ d.date === serverToday ? '（今天）' : '' }}</span>
+                <span class="list-sub">背单词 {{ fmtDuration(d.study_time_ms) }} · 忘记 {{ d.forget }} · 模糊 {{ d.vague }}</span>
+              </span>
+              <span class="list-trail">{{ d.articles ? `${d.articles} 篇短文` : '未生成' }}</span>
+            </a>
+          </li>
+        </ul>
+        <div v-if="days.length > historyLimit" class="more-row">
+          <button class="btn tonal" type="button" @click="historyLimit += 60">再显示 60 天（共 {{ days.length }} 天）</button>
+        </div>
+        <p v-else-if="days.length" class="body-small muted center">共 {{ days.length }} 天，全部永久保存，可在「设置 → 数据与备份」备份到 GitHub</p>
+      </section>
+
+      <!-- ============================== 设置 -->
+      <section class="view settings-view" v-else :key="'settings-' + settingsTab">
+        <header v-if="!settingsTab" class="top-bar"><div><h1 class="headline">设置</h1></div></header>
+        <header v-else class="top-bar sub-bar">
+          <a class="icon-btn back-btn" :href="'#/settings' + (settingsSection.parent ? '/' + settingsSection.parent : '')" aria-label="返回"><svg viewBox="0 0 24 24"><path :d="icons.back"/></svg></a>
+          <div><h1 class="headline">{{ settingsSection.name }}</h1><p class="supporting">{{ settingsSection.desc }}</p></div>
+        </header>
+
+        <!-- 设置首页：分组列表 -->
+        <div v-if="!settingsTab" class="settings-list">
+          <a v-for="(g, i) in visibleSections" :key="g.id" class="settings-item" :href="'#/settings/' + g.id" :style="{ '--i': i }">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons[g.icon]"/></svg></span>
+            <span class="settings-text"><span class="settings-name">{{ g.name }}</span><span class="settings-desc">{{ g.desc }}</span></span>
+            <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.chevron"/></svg>
+          </a>
+        </div>
+
+        <template v-if="settingsTab === 'appearance'">
+        <h3 class="pref-label">深浅色</h3>
+        <div class="pref-group">
+          <div class="pref-block">
+            <div class="segmented full" role="radiogroup" aria-label="深浅色">
+              <button v-for="m in THEME_MODES" :key="m.id" type="button" :class="{ active: theme.mode === m.id }"
+                      :aria-checked="theme.mode === m.id" role="radio" @click="setTheme({ mode: m.id })">{{ m.name }}</button>
+            </div>
+          </div>
+        </div>
+        <h3 class="pref-label">主题色</h3>
+        <div class="pref-group">
+          <div class="pref-block">
+            <div class="swatches" role="radiogroup" aria-label="主题色">
+              <button v-if="theme.wallpaper" type="button" class="swatch" :class="{ selected: theme.seed === 'wallpaper' }"
+                      role="radio" :aria-checked="theme.seed === 'wallpaper'" @click="setTheme({ seed: 'wallpaper' })">
+                <span class="swatch-dot"><i v-for="(c, i) in swatchColors(theme.wallpaper)" :key="i" :style="{ background: c }"></i>
+                  <span v-if="theme.seed === 'wallpaper'" class="swatch-check"><svg viewBox="0 0 24 24"><path :d="icons.check"/></svg></span></span>
+                <span>跟随壁纸</span>
+              </button>
+              <button v-for="p in THEME_PRESETS" :key="p.id" type="button" class="swatch" :class="{ selected: theme.seed === p.id }"
+                      role="radio" :aria-checked="theme.seed === p.id" @click="setTheme({ seed: p.id })">
+                <span class="swatch-dot"><i v-for="(c, i) in swatchColors(p.id)" :key="i" :style="{ background: c }"></i>
+                  <span v-if="theme.seed === p.id" class="swatch-check"><svg viewBox="0 0 24 24"><path :d="icons.check"/></svg></span></span>
+                <span>{{ p.name }}</span>
+              </button>
+              <label class="swatch swatch-custom" :class="{ selected: isCustomSeed }">
+                <span class="swatch-dot" :style="isCustomSeed ? { background: theme.seed } : null">
+                  <span v-if="isCustomSeed" class="swatch-check"><svg viewBox="0 0 24 24"><path :d="icons.check"/></svg></span></span>
+                <span>自定义</span>
+                <input type="color" :value="isCustomSeed ? theme.seed : '#4C7DFF'" aria-label="自定义主题色" @input="setTheme({ seed: $event.target.value })">
+              </label>
+            </div>
+          </div>
+          <div class="pref-block">
+            <div class="pref-title">预览</div>
+            <div class="theme-preview" aria-hidden="true">
+              <span style="background: var(--md-primary); color: var(--md-on-primary)">主色</span>
+              <span style="background: var(--md-secondary-container); color: var(--md-on-secondary-container)">次要</span>
+              <span style="background: var(--md-tertiary-container); color: var(--md-on-tertiary-container)">第三色</span>
+              <span style="background: var(--x-forget-container); color: var(--x-on-forget-container)">忘记</span>
+            </div>
+          </div>
+        </div>
+        <p class="pref-foot">外观只保存在这台设备上，不参与同步。</p>
+        </template>
+
+        <template v-if="settingsTab === 'app'">
+        <!-- 关于 -->
+        <div class="about-hero">
+          <span class="about-logo owl-logo" aria-hidden="true" @click="aboutLogoTap"></span>
+          <h2 class="about-name brand-font">{{ brandName }}</h2>
+          <p class="about-tag">把忘记、模糊的单词织进 AI 短文，在语境里回忆词义</p>
+          <div class="about-chips">
+            <span class="about-chip">{{ inApp ? '安卓版 ' + (appVersion ? 'v' + appVersion : '—') : '网页版 ' + (health.version ? 'v' + health.version : '—') }}</span>
+          </div>
+        </div>
+        <div class="settings-list about-list">
+          <a class="settings-item" href="#/settings/records" style="--i: 0">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.timer"/></svg></span>
+            <span class="settings-text"><span class="settings-name">学习记录</span><span class="settings-desc">每天背单词和看短文各花了多久</span></span>
+            <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.chevron"/></svg></a>
+          <a class="settings-item" href="https://github.com/Hark-for-work/heihei-web/releases/latest" target="_blank" rel="noopener" style="--i: 0">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.download"/></svg></span>
+            <span class="settings-text"><span class="settings-name">检查更新</span><span class="settings-desc">在浏览器中打开最新版本</span></span>
+            <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.openNew"/></svg></a>
+
+          <a class="settings-item" href="https://github.com/Hark-for-work/heihei-web" target="_blank" rel="noopener" style="--i: 2">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.code"/></svg></span>
+            <span class="settings-text"><span class="settings-name">源代码</span><span class="settings-desc">GitHub · Hark-for-work/heihei-web</span></span>
+            <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.openNew"/></svg></a>
+          <div class="settings-item static" style="--i: 3">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.favorite"/></svg></span>
+            <span class="settings-text"><span class="settings-name">开源致谢</span><span class="settings-desc">MoBeiDanCi（MIT）· 离线词典 ECDICT（MIT）· 思源宋体（OFL）· Vue（MIT）· EasyTier</span></span></div>
+        </div>
+        <template v-if="inApp">
+          <h3 class="pref-label">安卓 App</h3>
+          <div class="settings-list about-list">
+            <button class="settings-item" type="button" style="--i: 4" @click="appCall('openDiag')">
+              <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.bug"/></svg></span>
+              <span class="settings-text"><span class="settings-name">诊断信息</span><span class="settings-desc">运行状态、日志，可复制给开发者</span></span>
+              <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.chevron"/></svg></button>
+            <button class="settings-item" type="button" style="--i: 5" @click="appCall('reload')">
+              <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.refresh"/></svg></span>
+              <span class="settings-text"><span class="settings-name">刷新页面</span><span class="settings-desc">界面卡住或没更新时用</span></span></button>
+            <button class="settings-item danger-item" type="button" style="--i: 6" @click="appCall('exit')">
+              <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.logout"/></svg></span>
+              <span class="settings-text"><span class="settings-name">断开并退出</span><span class="settings-desc">停止后台连接并关闭 App</span></span></button>
+          </div>
+        </template>
+        </template>
+
+        <template v-if="settingsTab === 'momo'">
+        <h3 class="pref-label">账号</h3>
+        <div class="pref-group">
+          <label class="pref-block field"><span class="pref-title">开放 API Token</span>
+            <input v-model.trim="store.token" type="password" autocomplete="off" placeholder="粘贴 Token">
+            <span class="pref-sub">墨墨 App：我的 → 更多设置 → 实验功能 → 开放 API</span></label>
+        </div>
+        <h3 class="pref-label">网络</h3>
+        <div class="pref-group">
+          <div class="pref-block">
+            <div class="pref-title">连接方式</div>
+            <div class="segmented full" role="radiogroup" aria-label="连接方式">
+              <button v-for="m in PROXY_MODES" :key="m.id" type="button" :class="{ active: store.momoProxyMode === m.id }"
+                      :aria-checked="store.momoProxyMode === m.id" role="radio" @click="store.momoProxyMode = m.id">{{ m.name }}</button>
+            </div>
+            <span class="pref-sub">墨墨在国内，一般选「直连」</span>
+          </div>
+          <label v-if="store.momoProxyMode === 'custom'" class="pref-block field"><span class="pref-title">代理地址</span>
+            <input v-model.trim="store.momoProxyUrl" type="text" placeholder="http://127.0.0.1:7890"></label>
+          <div class="pref-actions">
+            <span class="pref-status" role="status">{{ momoStatus }}</span>
+            <button class="btn tonal" type="button" @click="testMomo">测试连接</button>
+          </div>
+        </div>
+        <p class="pref-foot">墨墨 App 要开启自动同步，当天背完后再拉取。</p>
+        </template>
+
+        <template v-if="settingsTab === 'model'">
+        <h3 class="pref-label">{{ sync.on ? '模型分工' : '使用的模型' }}</h3>
+        <div class="pref-group">
+          <div class="pref-block role-block">
+            <span v-if="sync.on" class="role-badge primary">主</span>
+            <label class="field grow"><span class="pref-title">{{ sync.on ? '主模型' : '生成与练习' }}</span>
+              <m-select v-model="store.activeId" :options="store.profiles.map(p => ({ value: p.id, label: p.name }))"></m-select>
+              <span class="pref-sub">{{ sync.on ? '生成短文、练习、AI 查词；手机连上电脑时由电脑调用' : '生成短文、练习、AI 查词，由这台设备直接调用' }}</span></label>
+          </div>
+          <template v-if="sync.on">
+          <div class="pref-block role-block">
+            <span class="role-badge backup">备</span>
+            <label class="field grow"><span class="pref-title">备用模型</span>
+              <m-select v-model="store.fallbackId" :options="[{ value: '', label: '不用备用模型' }].concat(store.profiles.map(p => ({ value: p.id, label: p.name, disabled: p.id === store.activeId })))"></m-select>
+              <span class="pref-sub">主模型出错或手机连不上电脑时使用，建议选云端模型</span></label>
+          </div>
+          <div v-if="!store.fallbackId" class="pref-actions"><button class="btn tonal" type="button" @click="addDeepSeekFallback">用 DeepSeek 官方做备用</button></div>
+          </template>
+          <div class="pref-block role-block">
+            <span v-if="sync.on" class="role-badge lookup">查</span>
+            <label class="field grow"><span class="pref-title">AI 查词</span>
+              <m-select v-model="store.lookupId" :options="[{ value: '', label: sync.on ? '和主模型相同' : '和上面的模型相同' }].concat(store.profiles.map(p => ({ value: p.id, label: p.name })))"></m-select>
+              <span class="pref-sub">可以选一个更快的模型</span></label>
+          </div>
+        </div>
+
+        <!-- 全部模型 -->
+        <div class="pref-label-row">
+          <h3 class="pref-label">全部模型</h3>
+          <span class="spacer"></span>
+          <button class="btn text small" type="button" @click="importInput.click()">导入</button>
+          <button class="btn text small" type="button" @click="exportProfiles(false)">导出</button>
+          <button class="btn text small" type="button" title="导出文件里包含 API Key，注意保管" @click="exportProfiles(true)">导出含 Key</button>
+          <input ref="importInput" type="file" accept=".json,application/json" hidden @change="importProfiles">
+        </div>
+        <div class="pref-group">
+          <button v-for="p in store.profiles" :key="p.id" type="button" class="pref-row pref-option" role="option"
+                  :class="{ selected: editProfile && editProfile.id === p.id }" :aria-selected="editProfile && editProfile.id === p.id"
+                  @click="editId = p.id">
+            <span class="pref-radio" aria-hidden="true"></span>
+            <span class="pref-text"><span class="pref-title">{{ p.name }}</span>
+              <span class="pref-sub">{{ (PROTOCOLS.find(x => x.id === p.protocol) || {}).name }} · {{ p.model || '未填模型' }}</span></span>
+            <span class="profile-tags">
+              <span v-if="store.activeId === p.id" class="badge">{{ sync.on ? '主' : '使用中' }}</span>
+              <span v-if="sync.on && store.fallbackId === p.id" class="badge FORGET">备</span>
+              <span v-if="store.lookupId === p.id" class="badge VAGUE">查词</span>
+            </span>
+          </button>
+          <div class="pref-block">
+            <m-select v-model="presetPick" placeholder="＋ 从预设新建模型" aria-label="从预设新建" :options="PRESETS.map(pr => ({ value: pr.name, label: pr.name }))" @change="addFromPreset"></m-select>
+          </div>
+        </div>
+
+        <template v-if="editProfile">
+        <h3 class="pref-label">编辑「{{ editProfile.name || '未命名' }}」</h3>
+        <div class="pref-group">
+          <div class="pref-block">
+            <div class="field-grid">
+              <label class="field"><span class="field-label">名称</span><input v-model.trim="editProfile.name" type="text"></label>
+              <label class="field"><span class="field-label">协议</span>
+                <m-select :model-value="editProfile.protocol" :options="PROTOCOLS.map(pr => ({ value: pr.id, label: pr.name }))" @change="setProtocol(editProfile, $event)"></m-select></label>
+            </div>
+            <label class="field"><span class="field-label">Base URL</span>
+              <input v-model.trim="editProfile.baseUrl" type="text" :placeholder="protocolBase(editProfile)"></label>
+            <label class="field"><span class="field-label">API Key（本地服务可留空）</span>
+              <input v-model.trim="editProfile.apiKey" type="password" autocomplete="off"></label>
+            <div class="field-row">
+              <label class="field grow"><span class="field-label">模型名</span>
+                <input v-model.trim="editProfile.model" type="text" :list="'models-' + editProfile.id" placeholder="deepseek-v4.1-flash">
+                <datalist :id="'models-' + editProfile.id"><option v-for="m in modelLists[editProfile.id] || []" :key="m" :value="m"></option></datalist>
+              </label>
+              <button class="btn tonal" type="button" @click="fetchModels(editProfile)">获取列表</button>
+            </div>
+          </div>
+          <div class="pref-block">
+            <div class="field-grid">
+              <label class="field"><span class="field-label">最大输出 tokens</span>
+                <input v-model.number="editProfile.maxTokens" type="number" min="256" step="256"></label>
+              <label class="field"><span class="field-label">上下文 tokens（0 不限）</span>
+                <input v-model.number="editProfile.contextWindow" type="number" min="0" step="1024"></label>
+            </div>
+            <div class="chip-set">
+              <button v-for="c in CONTEXT_CHIPS" :key="c" type="button" class="chip filter small-chip"
+                      :class="{ selected: editProfile.contextWindow === c }" @click="editProfile.contextWindow = c">{{ fmtTokens(c) }}</button>
+            </div>
+          </div>
+          <div class="pref-block">
+            <div class="pref-title">思考等级</div>
+            <div class="segmented full" role="radiogroup" aria-label="思考等级">
+              <button v-for="r in REASONING" :key="r.id" type="button" :class="{ active: (editProfile.reasoning || '') === r.id }"
+                      role="radio" :aria-checked="(editProfile.reasoning || '') === r.id" @click="editProfile.reasoning = r.id">{{ r.name }}</button>
+            </div>
+            <span class="pref-sub">「关闭」最快；越高越慢、越费 token</span>
+          </div>
+          <div class="pref-block">
+            <div class="pref-title">网络</div>
+            <div class="segmented full" role="radiogroup" aria-label="是否走代理">
+              <button v-for="m in PROXY_MODES" :key="m.id" type="button" :class="{ active: editProfile.proxyMode === m.id }"
+                      role="radio" :aria-checked="editProfile.proxyMode === m.id" @click="editProfile.proxyMode = m.id">{{ m.name }}</button>
+            </div>
+            <label v-if="editProfile.proxyMode === 'custom'" class="field"><span class="field-label">代理地址</span>
+              <input v-model.trim="editProfile.proxyUrl" type="text" placeholder="http://127.0.0.1:7890"></label>
+            <span class="pref-sub">本地 / 局域网模型选「直连」，境外服务通常要代理</span>
+          </div>
+          <details class="pref-help">
+            <summary>参数说明</summary>
+            <p>思考等级：「默认」不传参数，由模型自己决定；「关闭」会关掉 DeepSeek、Qwen 等的思考；低 / 中 / 高会自动换成 reasoning_effort、thinking、thinkingBudget 或 Ollama think 参数。模型不支持时可能报错，改回「默认」即可。</p>
+            <p>最大输出：每次回复的上限，思考模型建议 8192 以上，一篇短文约需 2–4K。上下文：超出会提前提示；Ollama 会按它设置 num_ctx。</p>
+          </details>
+          <div class="pref-actions">
+            <button class="btn text danger" type="button" @click="deleteProfile(editProfile)">删除</button>
+            <button class="btn text" type="button" @click="duplicateProfile(editProfile)">复制</button>
+            <span class="spacer"></span>
+            <button class="btn outlined-btn" type="button" @click="testProfile(editProfile)">测试</button>
+            <button v-if="sync.on && store.activeId !== editProfile.id" class="btn tonal" type="button" :disabled="store.fallbackId === editProfile.id" @click="store.fallbackId = editProfile.id">
+              {{ store.fallbackId === editProfile.id ? '当前备用' : '设为备用' }}</button>
+            <button class="btn filled" type="button" :disabled="store.activeId === editProfile.id" @click="store.activeId = editProfile.id">
+              {{ store.activeId === editProfile.id ? (sync.on ? '当前主模型' : '正在使用') : (sync.on ? '设为主模型' : '使用') }}</button>
+          </div>
+          <p v-if="profileStatus[editProfile.id]" class="pref-status block" role="status">{{ profileStatus[editProfile.id] }}</p>
+        </div>
+        </template>
+        </template>
+
+        <template v-if="settingsTab === 'generate'">
+        <h3 class="pref-label">点词查义</h3>
+        <div class="pref-group">
+          <div class="pref-block">
+            <div class="segmented full" role="radiogroup" aria-label="点词查义方式">
+              <button v-for="m in LOOKUP_MODES" :key="m.id" type="button" :class="{ active: store.lookupMode === m.id }"
+                      role="radio" :aria-checked="store.lookupMode === m.id" @click="store.lookupMode = m.id">{{ m.name }}</button>
+            </div>
+            <span class="pref-sub">{{ store.lookupMode === 'ai' ? '每个词都交给 AI 结合句子解释' : store.lookupMode === 'offline' ? '内置 5.8 万词（ECDICT），不联网' : '有道词典，连不上时自动用离线词典' }}；弹窗里随时能点「AI 结合语境」</span>
+          </div>
+        </div>
+        <h3 class="pref-label">短文</h3>
+        <div class="pref-group">
+          <label class="pref-block field"><span class="pref-title">备考目标</span>
+            <m-select v-model="store.target" :options="EXAM_TARGETS.map(t => ({ value: t, label: t }))"></m-select>
+            <span class="pref-sub">影响考试风短文和练习的出题风格</span></label>
+          <div class="pref-block">
+            <div class="pref-title">每篇最多词数</div>
+            <div class="chip-set">
+              <button v-for="c in MAX_WORDS_CHIPS" :key="c" type="button" class="chip filter small-chip"
+                      :class="{ selected: (store.maxWords || 0) === c }" @click="store.maxWords = c">{{ c ? c + ' 词' : '自动' }}</button>
+              <input v-model.number="store.maxWords" class="inline-number" type="number" min="0" max="1000" step="10" aria-label="自定义最多词数">
+            </div>
+            <span class="pref-sub">「自动」约 200–360 词；设了上限，词多时会拆成更多篇</span>
+          </div>
+        </div>
+        </template>
+
+        <template v-if="settingsTab === 'pc'">
+        <h3 class="pref-label">同步</h3>
+        <div class="pref-group">
+          <label class="pref-row">
+            <span class="pref-text"><span class="pref-title">同步到电脑</span>
+              <span class="pref-sub">{{ sync.on ? 'Token、模型和 Key 与电脑保持一致' + (IS_LOCAL ? '，历史和短文双向同步' : '') : '这台设备完全独立，只用本机设置' }}</span></span>
+            <input v-model="sync.on" type="checkbox" class="switch"></label>
+          <template v-if="sync.on">
+            <div v-if="IS_LOCAL" class="pref-row">
+              <span class="pref-text"><span class="pref-title">电脑</span><span class="pref-sub">{{ localState.pcUrl || '没填电脑地址' }}</span></span>
+              <span class="status-pill" :class="localState.online ? 'on' : 'off'">{{ localState.online ? '在线' : '不在线' }}</span>
+            </div>
+            <div class="pref-row">
+              <span class="pref-text"><span class="pref-title">上次同步</span>
+                <span class="pref-sub">{{ IS_LOCAL ? fmtTime(localState.lastSync) : (sync.at ? fmtTime(sync.at) : '—') }}<template v-if="IS_LOCAL && localState.syncError"> · 出错：{{ localState.syncError }}</template></span></span>
+            </div>
+            <div class="pref-actions">
+              <button class="btn text" type="button" @click="pullSettings({ force: true })">用电脑设置覆盖本机</button>
+              <button v-if="IS_LOCAL" class="btn filled" type="button" :disabled="localState.syncing" @click="syncLocalNow">{{ localState.syncing ? '同步中…' : '立即同步' }}</button>
+            </div>
+          </template>
+        </div>
+        <details class="pref-help outside">
+          <summary>同步说明</summary>
+          <p>开着时，设置保存在电脑的 settings.json，任一设备改了都会同步；手机第一次连上电脑时以电脑为准，手机上新加的模型会合并进去<template v-if="IS_LOCAL">。手机的历史和短文每 2 分钟和电脑同步一次，电脑在线时生成短文和 AI 查词交给电脑</template>。</p>
+          <p>关着时，设置只存在本机<template v-if="IS_LOCAL">，也不会在后台连 EasyTier</template>；生成短文直接用你选的模型，要选这台设备能访问到的。</p>
+        </details>
+
+        <template v-if="inApp">
+        <h3 class="pref-label">连接</h3>
+        <div class="settings-list">
+          <a class="settings-item" :href="CONN_BRIDGE ? '#/settings/connect' : null" @click="!CONN_BRIDGE && appCall('openSettings')" style="--i: 0">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.link"/></svg></span>
+            <span class="settings-text"><span class="settings-name">连接设置</span><span class="settings-desc">手机独立模式、EasyTier、电脑地址</span></span>
+            <svg class="settings-chev" viewBox="0 0 24 24"><path :d="icons.chevron"/></svg></a>
+        </div>
+        </template>
+
+        <template v-if="sync.on">
+        <h3 class="pref-label">电脑上的自动任务</h3>
+        <div class="pref-group">
+          <label class="pref-row">
+            <span class="pref-text"><span class="pref-title">自动生成当天短文</span>
+              <span class="pref-sub">电脑每 15 分钟检查一次，墨墨打卡后用主模型写好</span></span>
+            <input v-model="store.autoGenerate" type="checkbox" class="switch"></label>
+        </div>
+        </template>
+
+        <template v-if="lanUrls.length">
+        <h3 class="pref-label">手机访问</h3>
+        <div class="pref-group">
+          <a v-for="u in lanUrls" :key="u" class="pref-row" :href="u">
+            <span class="pref-text"><span class="pref-title lan-url">{{ u }}</span><span class="pref-sub">手机连同一个 Wi-Fi，用浏览器打开</span></span></a>
+        </div>
+        <p class="pref-foot">只在自家网络里用；要停止服务，双击 stop.bat。</p>
+        </template>
+        </template>
+
+        <template v-if="settingsTab === 'connect'">
+        <div v-if="!CONN_BRIDGE" class="pref-group">
+          <div class="pref-row"><span class="pref-text"><span class="pref-title">这个版本的 App 在原生页面里设置连接</span></span></div>
+          <div class="pref-actions"><button class="btn filled" type="button" @click="appCall('openSettings')">打开连接设置</button></div>
+        </div>
+        <template v-else>
+        <h3 class="pref-label">运行方式</h3>
+        <div class="pref-group">
+          <label class="pref-row">
+            <span class="pref-text"><span class="pref-title">手机独立模式</span>
+              <span class="pref-sub">{{ conn.localMode ? '推荐：网页和数据都在手机上，不开电脑也能用' : '每次都连电脑上的页面，电脑必须开着' }}</span></span>
+            <input v-model="conn.localMode" type="checkbox" class="switch"></label>
+        </div>
+        <h3 class="pref-label">EasyTier 网络</h3>
+        <div class="pref-group">
+          <div class="pref-block">
+            <label class="field" :class="{ invalid: conn.errors.networkName }"><span class="field-label">网络名称</span>
+              <input v-model.trim="conn.networkName" type="text" autocomplete="off" placeholder="和电脑上的 EasyTier 一致">
+              <span v-if="conn.errors.networkName" class="field-error">{{ conn.errors.networkName }}</span></label>
+            <label class="field"><span class="field-label">网络密码{{ conn.hasSecret ? '（已保存，留空不改）' : '' }}</span>
+              <input v-model="conn.networkSecret" type="password" autocomplete="off" :placeholder="conn.hasSecret ? '••••••••' : '没有可留空'"></label>
+            <label class="field" :class="{ invalid: conn.errors.peers }"><span class="field-label">节点地址（每行一个）</span>
+              <textarea v-model="conn.peers" rows="2" autocomplete="off" spellcheck="false" placeholder="udp://1.2.3.4:11010"></textarea>
+              <span v-if="conn.errors.peers" class="field-error">{{ conn.errors.peers }}</span></label>
+            <label class="field" :class="{ invalid: conn.errors.virtualIp }"><span class="field-label">本机虚拟 IP（可选）</span>
+              <input v-model.trim="conn.virtualIp" type="text" inputmode="decimal" autocomplete="off" placeholder="留空自动分配，如 10.10.10.2/24">
+              <span v-if="conn.errors.virtualIp" class="field-error">{{ conn.errors.virtualIp }}</span></label>
+          </div>
+        </div>
+        <p class="pref-foot">请先关掉官方 EasyTier App，安卓同一时间只能开一个 VPN。</p>
+        <h3 class="pref-label">电脑</h3>
+        <div class="pref-group">
+          <label class="pref-block field" :class="{ invalid: conn.errors.pcUrl }"><span class="pref-title">电脑页面地址</span>
+            <input v-model.trim="conn.pcUrl" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="10.10.10.1:8765">
+            <span v-if="conn.errors.pcUrl" class="field-error">{{ conn.errors.pcUrl }}</span>
+            <span class="pref-sub">走 EasyTier 时填电脑的虚拟 IP 和端口</span></label>
+          <div class="pref-actions">
+            <button class="btn text" type="button" @click="loadConn">还原</button>
+            <button class="btn filled" type="button" :disabled="conn.saving" @click="saveConn">{{ conn.saving ? '保存中…' : '保存并重新连接' }}</button>
+          </div>
+        </div>
+        </template>
+        </template>
+
+        <template v-if="settingsTab === 'records'">
+        <div class="records-sum">
+          <div class="rec-tile momo"><span class="rec-k">本周背单词</span><span class="rec-v"><template v-for="(p, i) in durParts(records.week.momo)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></span></div>
+          <div class="rec-tile rd"><span class="rec-k">本周看短文</span><span class="rec-v"><template v-for="(p, i) in durParts(records.week.app)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></span></div>
+          <div class="rec-tile"><span class="rec-k">累计背单词</span><span class="rec-v"><template v-for="(p, i) in durParts(records.total.momo)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></span></div>
+          <div class="rec-tile"><span class="rec-k">累计看短文</span><span class="rec-v"><template v-for="(p, i) in durParts(records.total.app)" :key="i">{{ p.n }}<small>{{ p.u }}</small></template></span></div>
+        </div>
+        <div class="segmented full" role="radiogroup" aria-label="展示方式">
+          <button v-for="m in RECORD_VIEWS" :key="m.id" type="button" :class="{ active: recordView === m.id }"
+                  role="radio" :aria-checked="recordView === m.id" @click="recordView = m.id">{{ m.name }}</button>
+        </div>
+
+        <div v-if="recordView !== 'climb'" class="chip-set src-chips" role="radiogroup" aria-label="统计哪些时长">
+          <button v-for="m in RECORD_SRCS" :key="m.id" type="button" class="chip filter" :class="{ selected: recordSrc === m.id }"
+                  role="radio" :aria-checked="recordSrc === m.id" @click="recordSrc = m.id">{{ m.name }}</button>
+        </div>
+
+        <template v-if="recordView === 'heat'">
+        <div class="heat-hero">
+          <div class="heat-streak">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="icons.flame"/></svg>
+            <span class="heat-num">{{ heat.streak }}</span><span class="heat-unit">天</span>
+          </div>
+          <div class="heat-hero-text">
+            <div class="heat-title">{{ heat.streak ? '已连续学习' : '今天开始新的连续记录' }}</div>
+            <div class="heat-sub">{{ recordSrc === 'momo' ? '背单词' : recordSrc === 'app' ? '看短文' : '背单词或看短文' }} · 最长连续 {{ heat.best }} 天 · 共 {{ heat.days }} 天</div>
+          </div>
+        </div>
+        <div class="heat-card">
+          <div class="heat-head"><span></span><span v-for="w in '一二三四五六日'" :key="w">{{ w }}</span></div>
+          <div class="heat-grid" role="grid" aria-label="学习热力日历">
+            <div v-for="r in heat.rows" :key="r.key" class="heat-row" role="row">
+              <span class="heat-month">{{ r.month }}</span>
+              <button v-for="c in r.cells" :key="c.key" type="button" role="gridcell" class="heat-cell"
+                      :class="['lv' + c.lv, { today: c.today, first: c.first, picked: heatPick === c.key }]" :disabled="c.future"
+                      ::="`${c.key} 学习 ${c.ms ? fmtShort(c.ms) : '0'}`" @click="pickHeat(c)">
+                <span>{{ c.day }}</span>
+              </button>
+            </div>
+          </div>
+          <div class="heat-foot">
+            <button v-if="heat.more" class="btn text" type="button" @click="heatWeeks += 26">看更早</button><span v-else></span>
+            <span class="heat-legend">少<i class="lv0"></i><i class="lv1"></i><i class="lv2"></i><i class="lv3"></i><i class="lv4"></i>多</span>
+          </div>
+        </div>
+        <transition name="menu">
+        <div v-if="heatDetail" class="heat-detail">
+          <div class="pref-title">{{ heatDetail.label }}</div>
+          <div class="heat-detail-row">
+            <span><span class="dot momo"></span>背单词 <b>{{ heatDetail.momo ? fmtDuration(heatDetail.momo) : '没学' }}</b></span>
+            <span><span class="dot rd"></span>看短文 <b>{{ heatDetail.app ? fmtDuration(heatDetail.app) : '没看' }}</b></span>
+          </div>
+        </div>
+        </transition>
+        </template>
+
+        <template v-if="recordView === 'climb'">
+        <div class="climb-card">
+          <svg class="climb-svg" viewBox="0 0 400 320" role="img" ::="`海拔 ${climb.rest} 米，正在攀登${climb.target.name}`">
+            <defs>
+              <linearGradient id="c-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" :stop-color="climb.sc.sky[0]"/><stop offset="1" :stop-color="climb.sc.sky[1]"/></linearGradient>
+              <linearGradient id="c-mt" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" :stop-color="climb.sc.mt[0]"/><stop offset="1" :stop-color="climb.sc.mt[1]"/></linearGradient>
+              <linearGradient id="c-haze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" :stop-color="climb.sc.haze" stop-opacity="0"/><stop offset="1" :stop-color="climb.sc.haze" stop-opacity=".75"/></linearGradient>
+              <radialGradient id="c-glow"><stop offset="0" :stop-color="climb.sc.sun.c" stop-opacity=".55"/><stop offset="1" :stop-color="climb.sc.sun.c" stop-opacity="0"/></radialGradient>
+              <filter id="c-blur" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+            </defs>
+            <rect width="400" height="320" fill="url(#c-sky)"/>
+            <circle v-for="(st, i) in climb.sc.stars" :key="'s' + i" class="c-star" :cx="st.x" :cy="st.y" :r="st.r" :opacity="st.o" :style="{ animationDelay: (i % 7) * 0.6 + 's' }"/>
+            <circle :cx="climb.sc.sun.x" :cy="climb.sc.sun.y" r="56" fill="url(#c-glow)"/>
+            <circle :cx="climb.sc.sun.x" :cy="climb.sc.sun.y" :r="climb.sc.sun.night ? 13 : 19" :fill="climb.sc.sun.c"/>
+            <circle v-if="climb.sc.sun.night" :cx="climb.sc.sun.x + 6" :cy="climb.sc.sun.y - 4" r="11" :fill="climb.sc.sky[0]"/>
+            <g v-for="(c, i) in climb.sc.clouds" :key="'c' + i" class="c-cloud" :style="{ animationDuration: c.dur + 's' }">
+              <g :transform="`translate(${c.x} ${c.y}) scale(${c.s})`"><ellipse cx="0" cy="0" rx="34" ry="9"/><ellipse cx="-12" cy="-6" rx="14" ry="10"/><ellipse cx="10" cy="-8" rx="17" ry="12"/></g>
+            </g>
+            <path v-for="(f, i) in climb.sc.far" :key="'f' + i" :d="f.d" :fill="f.fill"/>
+            <rect y="150" width="400" height="170" fill="url(#c-haze)"/>
+            <template v-if="!climb.sc.fly">
+              <path :d="climb.sc.main" fill="url(#c-mt)"/>
+              <path :d="climb.sc.shade" :fill="climb.sc.shadeC" opacity=".55"/>
+              <path v-if="climb.sc.snow" :d="climb.sc.snow" :fill="climb.sc.snowC"/>
+              <ellipse cx="120" cy="262" rx="160" ry="16" :fill="climb.sc.haze" opacity=".35" filter="url(#c-blur)"/>
+            </template>
+            <template v-else>
+              <path d="M150 300 L196 252 L214 262 L236 236 L262 270 L300 300 Z" :fill="climb.sc.mt[0]"/>
+              <path d="M228 244 L236 236 L244 248 L238 246 Z" fill="#fff"/>
+              <g class="c-sea"><ellipse cx="40" cy="296" rx="120" ry="26"/><ellipse cx="200" cy="304" rx="150" ry="22"/><ellipse cx="360" cy="294" rx="120" ry="28"/></g>
+            </template>
+            <path class="c-trail" :d="climb.sc.trail"/>
+            <path class="c-walked" :d="climb.sc.walked"/>
+            <circle class="c-base" :cx="climb.sc.base[0]" :cy="climb.sc.base[1]" r="3.5"/>
+            <g class="c-summit" :transform="`translate(${climb.sc.summit[0]} ${climb.sc.summit[1]})`">
+              <line x1="0" y1="0" x2="0" y2="-24"/><path d="M0 -24 l15 5 l-15 5 z"/>
+            </g>
+            <g class="c-label" :transform="`translate(${climb.sc.summit[0] > 300 ? climb.sc.summit[0] - 8 : climb.sc.summit[0] + 20} ${climb.sc.summit[1] - 12})`" :text-anchor="climb.sc.summit[0] > 300 ? 'end' : 'start'">
+              <text class="c-name" :x="0" y="0">{{ climb.target.name }}</text><text class="c-m" x="0" y="13">{{ climb.target.m.toLocaleString() }} m</text>
+            </g>
+            <g class="climb-owl" :transform="`translate(${climb.sc.owl[0].toFixed(1)} ${climb.sc.owl[1].toFixed(1)})`">
+              <circle class="c-ring" r="18"/>
+              <ellipse cy="3" rx="12" ry="3" fill="rgba(0,0,0,.3)"/>
+              <circle cy="-18" r="19" fill="#fff" opacity=".92"/>
+              <image href="/assets/momo-owl.png" x="-17" y="-35" width="34" height="34"/>
+            </g>
+            <text class="c-time" x="14" y="22">{{ climb.sc.time }} · {{ TIERS_NAME[climb.target.tier] }}</text>
+          </svg>
+          <div class="climb-info">
+            <div class="climb-alt"><span class="heat-num">{{ climb.rest.toLocaleString() }}</span><span class="heat-unit">米</span></div>
+            <div class="climb-text">
+              <div class="heat-title">{{ climb.target.tier === 2 ? '正在飞向' : '正在攀登' }}{{ climb.target.name }}<template v-if="climb.laps"> · 第 {{ climb.laps + 1 }} 轮</template></div>
+              <div class="heat-sub">{{ climb.target.at }} · 还差 {{ fmtDuration(climb.left) }}</div>
+            </div>
+          </div>
+          <div class="climb-bar"><i :style="{ width: climb.pct + '%' }"></i></div>
+          <div class="climb-ends"><span>{{ climb.prev.name }} {{ climb.prev.m.toLocaleString() }}m</span><span>{{ Math.floor(climb.pct) }}%</span><span>{{ climb.target.name }} {{ climb.target.m.toLocaleString() }}m</span></div>
+        </div>
+        <template v-for="t in climb.tiers" :key="t.name">
+          <div class="pref-label">{{ t.name }} · {{ t.done }}/{{ t.list.length }}</div>
+          <div class="pref-group">
+            <template v-for="p in t.list" :key="p.name">
+            <div v-if="peakVisible(p)" class="pref-row peak-row" :class="{ done: p.done, now: p.now && !p.done }">
+              <span class="peak-dot"><svg viewBox="0 0 24 24"><path :d="p.done ? icons.done : icons.flag"/></svg></span>
+              <span class="pref-text"><span class="pref-title">{{ p.name }}</span><span class="pref-sub">{{ p.at }} · {{ p.m.toLocaleString() }} 米 · 累计 {{ fmtShort(p.m * 60000) }}</span></span>
+              <span class="peak-state">{{ p.done ? '已登顶' : p.now ? Math.floor(climb.pct) + '%' : '' }}</span>
+            </div>
+            </template>
+            <div v-if="!peaksAll && t.list.some((p) => !peakVisible(p))" class="peak-more">{{ t.list.filter((p) => !peakVisible(p)).every((p) => p.done) ? '已登顶' : '还有' }} {{ t.list.filter((p) => !peakVisible(p)).length }} 座{{ t.list.filter((p) => !peakVisible(p)).every((p) => p.done) ? '，已收起' : '' }}</div>
+          </div>
+        </template>
+        <div class="pref-actions center"><button class="btn text" type="button" @click="peaksAll = !peaksAll">{{ peaksAll ? '收起' : '查看全部 ' + PEAKS.length + ' 个里程碑' }}</button></div>
+        <p class="pref-foot">累计学习（背单词 + 看短文）每 1 分钟上升 1 米。到达卡门线后从紫金山开始第 2 轮。</p>
+        </template>
+
+        <template v-if="recordView === 'list'">
+        <div class="segmented full" role="radiogroup" aria-label="统计方式">
+          <button v-for="m in RECORD_MODES" :key="m.id" type="button" :class="{ active: recordMode === m.id }"
+                  role="radio" :aria-checked="recordMode === m.id" @click="recordMode = m.id">{{ m.name }}</button>
+        </div>
+        <div v-if="recordSrc === 'all'" class="rec-legend"><span class="dot momo"></span>墨墨背单词<span class="dot rd"></span>{{ brandName }}（看短文）</div>
+        <div v-if="records.rows.length" class="pref-group rec-list">
+          <div v-for="r in records.rows.slice(0, recordShow)" :key="r.key" class="pref-row rec-row" :class="{ now: r.now }">
+            <span class="rec-date"><span class="pref-title">{{ r.label }}</span><span class="pref-sub">{{ r.sub }}</span></span>
+            <span class="rec-bars">
+              <span v-if="srcMomo" class="rec-bar"><i class="momo" :style="{ width: r.momoPct + '%' }"></i><b>{{ r.momo ? fmtShort(r.momo) : '—' }}</b></span>
+              <span v-if="srcApp" class="rec-bar"><i class="rd" :style="{ width: r.appPct + '%' }"></i><b>{{ r.app ? fmtShort(r.app) : '—' }}</b></span>
+            </span>
+          </div>
+          <div v-if="records.rows.length > recordShow" class="pref-actions center"><button class="btn text" type="button" @click="recordShow += 20">显示更多</button></div>
+        </div>
+        <div v-else class="empty"><div class="title-medium">还没有学习记录</div></div>
+        </template>
+        <p class="pref-foot">背单词时长来自墨墨；看短文时长是这台设备上打开本应用、且最近 3 分钟内有操作的时间。</p>
+        </template>
+
+        <template v-if="settingsTab === 'data'">
+        <h3 class="pref-label">数据</h3>
+        <div class="pref-group">
+          <div class="pref-row">
+            <span class="pref-text"><span class="pref-title">数据位置{{ health.local ? '（这台手机）' : '' }}</span>
+              <span class="pref-sub path-text">{{ health.dataDir || '—' }}</span></span>
+          </div>
+        </div>
+        <p class="pref-foot">和程序文件夹分开，更新时删掉旧程序也不会丢。</p>
+
+        <h3 class="pref-label">GitHub 备份</h3>
+        <div class="pref-group">
+          <template v-if="backup.loaded">
+            <label class="pref-row">
+              <span class="pref-text"><span class="pref-title">自动备份</span><span class="pref-sub">{{ backup.onPhone ? '这台手机直接备份：App 开着时每 3 小时一次' : '每 3 小时一次' }}，数据没变就跳过</span></span>
+              <input v-model="backup.auto" type="checkbox" class="switch" @change="saveBackupCfg"></label>
+            <div class="pref-block">
+              <label class="field"><span class="field-label">GitHub Token{{ backup.configured ? '（已保存，留空不改）' : '' }}</span>
+                <input v-model.trim="backup.token" type="password" autocomplete="off" :placeholder="backup.configured ? '••••••••' : 'ghp_…'"></label>
+              <div class="field-grid">
+                <label class="field"><span class="field-label">仓库名</span>
+                  <input v-model.trim="backup.repo" type="text" placeholder="momo-kan-backup"></label>
+                <label v-if="!backup.onPhone" class="field"><span class="field-label">代理（可选）</span>
+                  <input v-model.trim="backup.proxy" type="text" placeholder="留空直连"></label>
+              </div>
+            </div>
+            <div class="pref-row">
+              <span class="pref-text"><span class="pref-title">上次备份</span>
+                <span class="pref-sub">{{ fmtTime(backup.lastBackupAt) }}<template v-if="backup.lastError"> · 出错：{{ backup.lastError }}</template><template v-if="backup.msg"> · {{ backup.msg }}</template></span></span>
+              <a v-if="backup.url" class="btn text small" :href="backup.url" target="_blank" rel="noopener">打开仓库</a>
+            </div>
+            <div class="pref-actions">
+              <button class="btn text" type="button" :disabled="backup.busy || (!backup.configured && !backup.token)" @click="restoreBackup">从备份恢复</button>
+              <button class="btn filled" type="button" :disabled="backup.busy || (!backup.configured && !backup.token)" @click="runBackup">立即备份</button>
+            </div>
+          </template>
+          <div v-else class="pref-row">
+            <span class="pref-text"><span class="pref-title">在电脑上设置</span>
+              <span class="pref-sub">{{ IS_LOCAL ? '开着电脑同步且电脑在线时，这里也能设置' : '备份服务不可用' }}<template v-if="backup.msg"> · {{ backup.msg }}</template></span></span>
+          </div>
+        </div>
+        <details v-if="backup.loaded" class="pref-help outside">
+          <summary>如何获取 GitHub Token</summary>
+          <p>GitHub → Settings → Developer settings → Personal access tokens，生成一个 classic Token 并勾选 repo（或 fine-grained Token，只给备份仓库 Contents 读写）。手机和电脑可以填同一个 Token、同一个仓库，恢复时会合并。备份放在你自己的私有仓库（没有会自动创建），只含学习时长、词表、短文和练习，不含墨墨 Token 和模型 Key。</p>
+        </details>
+
+        <h3 class="pref-label">隐私</h3>
+        <div class="settings-list">
+          <button class="settings-item danger-item" type="button" @click="clearSecrets">
+            <span class="settings-icon"><svg viewBox="0 0 24 24"><path :d="icons.key"/></svg></span>
+            <span class="settings-text"><span class="settings-name">清除 Token 与所有 Key</span>
+              <span class="settings-desc">它们只保存在你的设备里，不写入数据库或日志</span></span></button>
+        </div>
+        </template>
+      </section>
+    </main>
+  </div>
+
+  <!-- 点词释义 -->
+  <div v-if="pop.open" class="popover" role="dialog" aria-modal="false" :style="pop.style" @click.stop>
+    <div class="popover-head">
+      <span class="popover-word" lang="en">{{ pop.word }}</span>
+      <span v-if="pop.badge" class="badge" :class="pop.badgeClass">{{ pop.badge }}</span>
+      <button class="icon-btn" type="button" aria-label="关闭" @click="closePop">
+        <svg viewBox="0 0 24 24"><path :d="icons.close"/></svg></button>
+    </div>
+    <div class="popover-pos">{{ pop.pos }}</div>
+    <div class="popover-meaning">{{ pop.meaning }}</div>
+    <div class="popover-note">{{ pop.note }}</div>
+    <div v-if="pop.source || pop.busy" class="popover-foot">
+      <span class="popover-source">{{ pop.busy ? '查询中…' : pop.source }}</span>
+      <button v-if="!pop.busy && pop.source && pop.source !== 'AI' && pop.sentence" class="btn text small" type="button" @click="lookupWithAi">AI 结合语境</button>
+    </div>
+  </div>
+  <div v-if="pop.open && pop.mobile" class="scrim" @click="closePop"></div>
+
+  <!-- M3 对话框 -->
+  <transition name="dlg">
+    <div v-if="dialog.open" class="dialog-scrim" @click.self="closeDialog(false)">
+      <div class="dialog" role="alertdialog" aria-modal="true" ::="dialog.title">
+        <h2 v-if="dialog.title" class="dialog-title">{{ dialog.title }}</h2>
+        <p class="dialog-text">{{ dialog.text }}</p>
+        <div class="dialog-actions">
+          <button class="btn text" type="button" @click="closeDialog(false)">{{ dialog.cancel }}</button>
+          <button v-if="dialog.alt" class="btn text" type="button" @click="closeDialog('alt')">{{ dialog.alt }}</button>
+          <button class="btn text" :class="{ danger: dialog.danger }" type="button" @click="closeDialog('ok')">{{ dialog.ok }}</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <transition name="dlg">
+    <div v-if="eggDlg" class="dialog-scrim" @click.self="eggDlg = false">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="口令">
+        <h2 class="dialog-title">口令</h2>
+        <input v-model="eggCode" class="dialog-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus @keydown.enter="submitEgg">
+        <div class="dialog-actions">
+          <button class="btn text" type="button" @click="eggDlg = false">取消</button>
+          <button class="btn text" type="button" :disabled="!eggCode.trim()" @click="submitEgg">确定</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <transition name="dlg">
+    <div v-if="wordDlg" class="dialog-scrim" @click.self="wordDlg = false">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="手动补词">
+        <h2 class="dialog-title">手动补词</h2>
+        <p class="dialog-text">按「忘记」加入这一天的词表。一行一个，或用逗号、空格分隔。</p>
+        <textarea v-model="manualWords" class="dialog-input" rows="4" placeholder="ambiguous, deteriorate" autofocus></textarea>
+        <div class="dialog-actions">
+          <button class="btn text" type="button" @click="wordDlg = false">取消</button>
+          <button class="btn text" type="button" :disabled="!manualWords.trim()" @click="addManualWords().then(() => { wordDlg = false })">加入词表</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <div v-if="snack" class="snackbar" role="status" aria-live="polite">{{ snack }}</div>
+</div>
+
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

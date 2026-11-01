@@ -1,0 +1,145 @@
+name: Android APK
+
+# 推送 v* 标签（电脑端和安卓同一个版本号）时打包 APK 并附到同名 Release；也可以在 Actions 页面手动运行
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EASYTIER_REF: v2.6.4
+  NDK_VERSION: 26.3.11579264
+  RUST_TOOLCHAIN: "1.95"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout EasyTier
+        uses: actions/checkout@v4
+        with:
+          repository: EasyTier/EasyTier
+          ref: ${{ env.EASYTIER_REF }}
+          path: easytier-src
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0 ndk;${{ env.NDK_VERSION }}"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"; else V="0.0.${GITHUB_RUN_NUMBER}-dev"; fi
+          echo "APP_VERSION=$V" >> $GITHUB_ENV
+          mkdir -p logs
+
+      - name: Bundle web app into APK (手机独立模式)
+        run: node scripts/build-android-web.js
+
+      - name: Kotlin compile check (before the long Rust build)
+        run: |
+          mkdir -p android/app/src/main/java/com/easytier/jni
+          cp easytier-src/easytier-contrib/easytier-android-jni/kotlin/com/easytier/jni/EasyTierJNI.kt android/app/src/main/java/com/easytier/jni/
+          set -o pipefail
+          gradle -p android --no-daemon compileReleaseKotlin 2>&1 | tee logs/kotlin-check.log
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: aarch64-linux-android
+          cache: false
+          rustflags: ""
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: easytier-src
+          cache-on-failure: true
+
+      - name: Build EasyTier JNI (arm64-v8a)
+        run: |
+          set -o pipefail
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+          cargo install cargo-ndk --locked 2>&1 | tail -3
+          mkdir -p easytier-src/easytier-gui/dist
+          (cd easytier-src/easytier-contrib/easytier-ffi && cargo ndk -t arm64-v8a -P 24 build --release) 2>&1 | tee logs/ffi.log
+          (cd easytier-src/easytier-contrib/easytier-android-jni && cargo ndk -t arm64-v8a -P 24 build --release) 2>&1 | tee logs/jni.log
+          OUT=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$OUT"
+          cp easytier-src/target/aarch64-linux-android/release/libeasytier_android_jni.so "$OUT/"
+          cp easytier-src/target/aarch64-linux-android/release/libeasytier_ffi.so "$OUT/"
+          # 上游 JNI 库引用了 easytier_ffi 的符号却没声明依赖，补上 NEEDED，否则加载时报找不到符号
+          sudo apt-get install -qqy patchelf >/dev/null
+          patchelf --add-needed libeasytier_ffi.so "$OUT/libeasytier_android_jni.so"
+          readelf -d "$OUT/libeasytier_android_jni.so" | grep -q 'libeasytier_ffi.so' || { echo "patchelf failed"; exit 1; }
+          # 带上需要的 libc++_shared.so
+          if readelf -d "$OUT"/*.so | grep -q 'libc++_shared.so'; then
+            cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$OUT/"
+          fi
+          readelf -d "$OUT"/*.so | grep NEEDED | sort -u | tee logs/needed.log
+          ls -la "$OUT"
+
+      - name: Build APK
+        env:
+          MOMO_KEYSTORE_B64: ${{ secrets.MOMO_KEYSTORE_B64 }}
+          MOMO_KEYSTORE_PASSWORD: ${{ secrets.MOMO_KEYSTORE_PASSWORD }}
+          MOMO_KEY_ALIAS: ${{ secrets.MOMO_KEY_ALIAS }}
+        run: |
+          set -o pipefail
+          # 签名密钥放在仓库 Secrets（MOMO_KEYSTORE_B64 = PKCS12 文件的 base64）
+          if [ -n "$MOMO_KEYSTORE_B64" ]; then
+            echo "$MOMO_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/momo.p12"
+            export MOMO_KEYSTORE="$RUNNER_TEMP/momo.p12"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "::error::没有配置签名 Secrets（MOMO_KEYSTORE_B64 / MOMO_KEYSTORE_PASSWORD），不发布未签名的正式版"; exit 1
+          fi
+          gradle -p android --no-daemon assembleRelease -PversionName="$APP_VERSION" -PversionCode="$GITHUB_RUN_NUMBER" 2>&1 | tee logs/gradle.log
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/momo-kan-$APP_VERSION-arm64.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: momo-android-apk
+          path: dist/*.apk
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          # 只上传 APK；Release 的说明由发布时写好（电脑端与安卓同版本同一个 Release）
+
+      # 失败时把日志推到 ci-logs 分支，方便排查
+      - name: Push logs on failure
+        if: failure()
+        run: |
+          cd logs || exit 0
+          for f in *.log; do tail -c 150000 "$f" > "$f.tail" && mv "$f.tail" "$f"; done
+          git init -q . && git checkout -q -b ci-logs
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "logs run ${{ github.run_id }}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-logs

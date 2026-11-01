@@ -1,0 +1,7 @@
+.gradle/
+build/
+app/build/
+local.properties
+# CI 编译时放进来的 EasyTier 原生库和 JNI 接口
+app/src/main/jniLibs/
+app/src/main/java/com/easytier/

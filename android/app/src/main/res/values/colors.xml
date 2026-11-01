@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 与网页同一套 M3 配色（种子 #006C4C） -->
+<resources>
+    <color name="md_primary">#006C4C</color>
+    <color name="md_on_primary">#FFFFFF</color>
+    <color name="md_primary_container">#89F8C7</color>
+    <color name="md_on_primary_container">#002114</color>
+    <color name="md_secondary">#4C6358</color>
+    <color name="md_on_secondary">#FFFFFF</color>
+    <color name="md_secondary_container">#CEE9DA</color>
+    <color name="md_on_secondary_container">#092016</color>
+    <color name="md_tertiary">#3E6374</color>
+    <color name="md_tertiary_container">#C2E8FD</color>
+    <color name="md_on_tertiary_container">#001F2A</color>
+    <color name="md_error">#BA1A1A</color>
+    <color name="md_error_container">#FFDAD6</color>
+    <color name="md_on_error_container">#410002</color>
+    <color name="md_surface">#F5FBF5</color>
+    <color name="md_surface_container_low">#EFF5EF</color>
+    <color name="md_surface_container">#EAEFE9</color>
+    <color name="md_surface_container_high">#E4EAE4</color>
+    <color name="md_surface_container_highest">#DEE4DE</color>
+    <color name="md_on_surface">#171D1A</color>
+    <color name="md_on_surface_variant">#404943</color>
+    <color name="md_outline">#707973</color>
+    <color name="md_outline_variant">#BFC9C1</color>
+</resources>

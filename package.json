@@ -1,0 +1,19 @@
+{
+  "name": "heihei-web",
+  "version": "0.7.0",
+  "private": true,
+  "description": "把墨墨背单词里每天忘记/模糊的词织进 AI 短文，在语境中复习（基于 MoBeiDanCi 二改）。",
+  "license": "MIT",
+  "scripts": {
+    "prestart": "node scripts/free-port.js 8765",
+    "start": "node --disable-warning=ExperimentalWarning server.js --open --auto-exit",
+    "serve": "node --disable-warning=ExperimentalWarning server.js",
+    "lan": "node --disable-warning=ExperimentalWarning server.js --host 0.0.0.0 --open",
+    "stop": "node scripts/free-port.js 8765",
+    "mock": "node tools/mock.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

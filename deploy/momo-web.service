@@ -1,0 +1,17 @@
+# 放到 /etc/systemd/system/momo-web.service，然后：
+#   sudo systemctl daemon-reload && sudo systemctl enable --now momo-web
+[Unit]
+Description=momo-web
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/momo-web
+# 只监听本机，由 Nginx 反代；不要加 --open --auto-exit
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server.js --host 127.0.0.1 --port 8765
+Environment=MOMO_DB=/var/lib/momo-web/momo.db
+Restart=on-failure
+DynamicUser=yes
+StateDirectory=momo-web
+
+[Install]
+WantedBy=multi-user.target
