@@ -1,6 +1,6 @@
 {
   "name": "heihei-web",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "把墨墨背单词里每天忘记/模糊的词织进 AI 短文，在语境中复习（基于 MoBeiDanCi 二改）。",
   "license": "MIT",

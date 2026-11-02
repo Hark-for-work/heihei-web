@@ -50,6 +50,11 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"; else V="0.0.${GITHUB_RUN_NUMBER}-dev"; fi
           echo "APP_VERSION=$V" >> $GITHUB_ENV
+          # versionCode 由版本号算出（主*10000+次*100+补丁），保证新仓库也比旧仓库的 run 号大，可覆盖升级
+          IFS=. read -r MA MI PA <<< "${V%%-*}"
+          VC=$(( 10#${MA:-0} * 10000 + 10#${MI:-0} * 100 + 10#${PA:-0} ))
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then VC=$GITHUB_RUN_NUMBER; fi
+          echo "APP_VERSION_CODE=$VC" >> $GITHUB_ENV
           mkdir -p logs
 
       - name: Bundle web app into APK (手机独立模式)
@@ -116,7 +121,7 @@ jobs:
           elif [ "${{ github.ref_type }}" = "tag" ]; then
             echo "::error::没有配置签名 Secrets（MOMO_KEYSTORE_B64 / MOMO_KEYSTORE_PASSWORD），不发布未签名的正式版"; exit 1
           fi
-          gradle -p android --no-daemon assembleRelease -PversionName="$APP_VERSION" -PversionCode="$GITHUB_RUN_NUMBER" 2>&1 | tee logs/gradle.log
+          gradle -p android --no-daemon assembleRelease -PversionName="$APP_VERSION" -PversionCode="$APP_VERSION_CODE" 2>&1 | tee logs/gradle.log
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk "dist/momo-kan-$APP_VERSION-arm64.apk"
           ls -la dist
